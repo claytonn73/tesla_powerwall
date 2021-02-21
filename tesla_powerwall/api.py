@@ -4,8 +4,10 @@ from urllib.parse import urljoin
 
 import requests
 from packaging.version import Version
+from requests.api import request
 from urllib3 import disable_warnings
 from urllib3.exceptions import InsecureRequestWarning
+from http.client import responses
 
 from .error import AccessDeniedError, APIError, PowerwallUnreachableError
 
@@ -28,7 +30,8 @@ class API(object):
         self._http_session = http_session if http_session else requests.Session()
         self._http_session.verify = verify_ssl
 
-    def _parse_endpoint(self, endpoint: str) -> str:
+    @staticmethod
+    def _parse_endpoint(endpoint: str) -> str:
         if endpoint.startswith("https"):
             endpoint = endpoint
         elif endpoint.startswith("http"):
@@ -46,7 +49,8 @@ class API(object):
 
         return endpoint
 
-    def _process_response(self, response: str) -> dict:
+    @staticmethod
+    def _handle_error(response: requests.Response) -> None:
         if response.status_code == 404:
             raise APIError(
                 "The url {} returned error 404".format(response.request.path_url)
@@ -60,11 +64,30 @@ class API(object):
                 raise AccessDeniedError(response.request.path_url)
             else:
                 raise AccessDeniedError(
-                    response.request.path_url, response_json["error"]
+                    response.request.path_url,
+                    response_json.get("error"),
+                    response_json.get("message"),
                 )
 
-        if response.status_code == 502:
-            raise PowerwallUnreachableError()
+        if response.text is not None and len(response.text) > 0:
+            raise APIError(
+                "API returned status code '{}: {}' with body: {}".format(
+                    response.status_code,
+                    responses.get(response.status_code),
+                    response.text,
+                )
+            )
+        else:
+            raise APIError(
+                "API returned status code '{}: {}' ".format(
+                    response.status_code, responses.get(response.status_code)
+                )
+            )
+
+    def _process_response(self, response: requests.Response) -> dict:
+        if response.status_code >= 400:
+            # API returned some sort of error that must be handled
+            self._handle_error(response)
 
         try:
             response_json = response.json()
@@ -76,6 +99,8 @@ class API(object):
         if response_json is None:
             return {}
 
+        # Newer versions of the powerwall do not return such values anymore
+        # Kept for backwards compability or if the API changes again
         if "error" in response_json:
             raise APIError(response_json["error"])
 
@@ -84,15 +109,12 @@ class API(object):
     def url(self, path: str):
         return urljoin(self._endpoint, path)
 
-    def get(
-        self, path: str, needs_authentication: bool = False, headers: dict = {}
-    ) -> dict:
-        if needs_authentication and not self.is_authenticated():
-            raise APIError("Authentication required to access {}".format(path))
-
+    def get(self, path: str, headers: dict = {}) -> dict:
         try:
             response = self._http_session.get(
-                url=self.url(path), timeout=self._timeout, headers=headers,
+                url=self.url(path),
+                timeout=self._timeout,
+                headers=headers,
             )
         except (
             requests.exceptions.ConnectionError,
@@ -106,12 +128,8 @@ class API(object):
         self,
         path: str,
         payload: dict,
-        needs_authentication: bool = False,
         headers: dict = {},
     ) -> dict:
-        if needs_authentication and not self.is_authenticated():
-            raise APIError("Authentication required to access {}".format(path))
-
         try:
             response = self._http_session.post(
                 url=self.url(path),
@@ -149,9 +167,8 @@ class API(object):
         if not self.is_authenticated():
             raise APIError("Must be logged in to log out")
         # The api unsets the auth cookie and the token is invalidated
-        self.get("logout", True)
+        self.get("logout")
 
-    # Although this could be done dynamically it is more descriptive
     # Endpoints are mapped to one method by <verb>_<path> so they can be easily accessed
 
     def get_system_status_soe(self) -> dict:
@@ -161,10 +178,10 @@ class API(object):
         return self.get("meters/aggregates")
 
     def get_sitemater_run(self):
-        return self.get("sitemaster/run", True)
+        return self.get("sitemaster/run")
 
     def get_sitemaster_stop(self):
-        return self.get("sitemaster/stop", True)
+        return self.get("sitemaster/stop")
 
     def get_sitemaster(self) -> dict:
         return self.get("sitemaster")
@@ -183,39 +200,37 @@ class API(object):
         return self.get("powerwalls")
 
     def get_operation(self):
-        return self.get("operation", True)
+        return self.get("operation")
 
     def get_networks(self) -> list:
         return self.get("networks")
 
     def get_phase_usage(self):
-        return self.get("powerwalls/phase_usages", needs_authentication=True)
+        return self.get("powerwalls/phase_usages")
 
     def post_sitemaster_run_for_commissioning(self):
-        return self.post(
-            "sitemaster/run_for_commissioning", payload={}, needs_authentication=True
-        )
+        return self.post("sitemaster/run_for_commissioning", payload={})
 
     def get_solars(self):
-        return self.get("solars", needs_authentication=True)
+        return self.get("solars")
 
     def get_config(self):
-        return self.get("config", needs_authentication=True)
+        return self.get("config")
 
     def get_logs(self):
-        return self.get("getlogs", needs_authentication=True)
+        return self.get("getlogs")
 
     def get_meters(self) -> list:
-        return self.get("meters", needs_authentication=True)
+        return self.get("meters")
 
     def get_installer(self) -> dict:
-        return self.get("installer", needs_authentication=True)
+        return self.get("installer")
 
     def get_solar_brands(self) -> List[str]:
-        return self.get("solars/brands", needs_authentication=True)
+        return self.get("solars/brands")
 
     def get_system_update_status(self) -> dict:
-        return self.get("system/update/status", needs_authentication=True)
+        return self.get("system/update/status")
 
     def get_system_status_grid_status(self) -> dict:
         return self.get("system_status/grid_status")
@@ -224,7 +239,7 @@ class API(object):
         return self.get("site_info")
 
     def get_site_info_grid_codes(self) -> list:
-        return self.get("site_info/grid_codes", needs_authentication=True)
+        return self.get("site_info/grid_codes")
 
     def post_site_info_site_name(self, body: dict) -> dict:
-        return self.post("site_info/site_name", body, needs_authentication=True)
+        return self.post("site_info/site_name", body)

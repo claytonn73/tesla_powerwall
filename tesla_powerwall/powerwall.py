@@ -23,9 +23,10 @@ from .responses import (
     PowerwallStatus,
     SiteMaster,
     SiteInfo,
-    Solar
+    Solar,
 )
 from .helpers import assert_attribute
+
 
 class Powerwall:
     def __init__(
@@ -35,7 +36,7 @@ class Powerwall:
         http_session: requests.Session = None,
         verify_ssl: bool = False,
         disable_insecure_warning: bool = True,
-        pin_version: Union[str,version.Version] = None,
+        pin_version: Union[str, version.Version] = None,
     ):
         if pin_version is not None:
             self.pin_version(pin_version)
@@ -43,14 +44,18 @@ class Powerwall:
             self._pin_version = None
 
         self._api = API(
-            endpoint, timeout, http_session, verify_ssl, disable_insecure_warning,
+            endpoint,
+            timeout,
+            http_session,
+            verify_ssl,
+            disable_insecure_warning,
         )
 
     def login_as(
         self,
         user: Union[User, str],
-        email: str,
         password: str,
+        email: str,
         force_sm_off: bool = False,
     ) -> dict:
         if isinstance(user, User):
@@ -62,11 +67,14 @@ class Powerwall:
 
         return LoginResponse(response)
 
-    def login(self, email: str, password: str, force_sm_off: bool = False) -> dict:
-        return self.login_as(User.CUSTOMER, email, password, force_sm_off)
+    def login(self, password: str, email: str = "", force_sm_off: bool = False) -> dict:
+        return self.login_as(User.CUSTOMER, password, email, force_sm_off)
 
     def logout(self):
         self._api.logout()
+
+    def is_authenticated(self) -> bool:
+        return self._api.is_authenticated()
 
     def run(self):
         self._api.get_sitemater_run()
@@ -134,9 +142,9 @@ class Powerwall:
         )
         return OperationMode(operation_mode)
 
-    def get_backup_reserved_percentage(self) -> float:
+    def get_backup_reserve_percentage(self) -> float:
         return assert_attribute(
-            self._api.get_operation(), "backup_reserved_percent", "operation"
+            self._api.get_operation(), "backup_reserve_percent", "operation"
         )
 
     def get_solars(self) -> List[Solar]:
